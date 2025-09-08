@@ -391,58 +391,6 @@ def _get_row_by_name(name: str, df: pd.DataFrame):
         pass
     return None
 
-def render_mobile_tag_chips(primary_color: str, tags_src: list[str]):
-    tags = [t.lstrip("#") for t in tags_src]
-    pills = [f'<button class="pp-chip" data-kw="근처 {html.escape(kw)}">#{html.escape(kw)}</button>' for kw in tags]
-    rows = (len(tags)+1)//2
-    height_px = min(rows*46 + 14, 460)  # 적당히 늘어나는 높이
-
-    components.html(f"""
-    <style>
-      .pp-chip-grid {{
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0,1fr)); /* 모바일 2열 고정 */
-        gap: 8px;
-        width: 100%;
-      }}
-      .pp-chip {{
-        width: 100%;
-        height: 36px;                 /* 컴팩트 높이 */
-        padding: 6px 8px;             /* 좌우 패딩 슬림 */
-        border-radius: 999px;
-        border: 1px solid rgba(255,107,53,.35);
-        background: linear-gradient(180deg,#FFF8F2 0%, #FFF3EA 100%);
-        color: {primary_color};
-        font-weight: 700;
-        font-size: 13px;
-        line-height: 1;
-        box-shadow: 0 2px 8px rgba(255,107,53,.10);
-        transition: transform .08s ease, box-shadow .15s ease, filter .15s ease;
-      }}
-      .pp-chip:hover {{ filter: brightness(1.02); box-shadow: 0 4px 12px rgba(255,107,53,.12); }}
-      .pp-chip:active {{ transform: translateY(1px); }}
-    </style>
-
-    <div class="pp-chip-grid" id="pp-chip-grid">
-      {''.join(pills)}
-    </div>
-
-    <script>
-      (function(){{
-        var grid = document.getElementById('pp-chip-grid');
-        if(!grid) return;
-        grid.addEventListener('click', function(e){{
-          var btn = e.target.closest('.pp-chip');
-          if(!btn) return;
-          var kw = btn.getAttribute('data-kw');
-          const url = new URL(window.parent.location);
-          url.searchParams.set('kw', kw);
-          window.parent.history.replaceState(null,'',url);
-          window.parent.location.reload();
-        }});
-      }})();
-    </script>
-    """, height=height_px, scrolling=True)
 #메인
 #위치 확보
 ensure_browser_geolocation()
@@ -621,44 +569,128 @@ if "kw" in qp:
     st.session_state["search_kw"] = v
     st.session_state["do_search"] = True
 
-#키워드 입력칸 + 검색 버튼
-with st.form("search_form", clear_on_submit=False):
-    c1, c2 = st.columns([8.6, 1.4])
 
-    with c1:
-        kw_current = st.text_input(
-            " ",
-            key="kw_input",
-            placeholder="지역, 음식 종류, 식당명으로 검색해보세요",
-            label_visibility="collapsed",
-        )
+# 검색 처리 함수
+def _apply_kw():
+    input_value = st.session_state.get("kw_input_hidden", "").strip()
+    if not input_value:
+        st.session_state["search_kw"] = ""
+        st.session_state["do_search"] = False
+        st.session_state["search_in_progress"] = False
+        return
 
-    in_progress = bool(st.session_state.get("search_in_progress"))
-    btn_label   = "⏹ 정지" if in_progress else "🔎 검색"
+    if len(input_value) <= 3 and not input_value.startswith("근처 "):
+        input_value = f"근처 {input_value}"
 
-    with c2:
-        submit = st.form_submit_button(btn_label, type="primary", use_container_width=True)
+    st.session_state["search_kw"] = input_value
+    st.session_state["do_search"] = True
+    st.session_state["search_in_progress"] = True
+    st.session_state["search_token"] = st.session_state.get("search_token", 0) + 1
 
-    if submit:
-        if in_progress:
-            # 정지: 현재 검색 무효화 + 즉시 UI 갱신
-            st.session_state["do_search"] = False
-            st.session_state["search_in_progress"] = False
-            st.session_state["search_token"] = st.session_state.get("search_token", 0) + 1
-            st.rerun()  # ← 여기 중요
-        else:
-            kw = (kw_current or "").strip()
-            if not kw:
-                # 키워드 비었으면 액션 없음 (비활성화 대신 no-op)
-                pass
-            else:
-                if len(kw) <= 3 and not kw.startswith("근처 "):
-                    kw = f"근처 {kw}"
-                st.session_state["search_kw"] = kw
-                st.session_state["do_search"] = True
-                st.session_state["search_in_progress"] = True
-                st.session_state["search_token"] = st.session_state.get("search_token", 0) + 1
-                st.rerun()
+
+# Hidden input for state management
+if "kw_input_hidden" not in st.session_state:
+    st.session_state["kw_input_hidden"] = st.session_state.get("kw_input", "")
+
+# HTML/JavaScript 검색바 (실시간 활성화)
+search_html = f"""
+<div style="display:flex; gap:8px; margin-bottom:16px;">
+    <input type="text" 
+           id="search-input" 
+           placeholder="지역, 음식 종류, 식당명으로 검색해보세요"
+           value="{st.session_state.get('kw_input', '')}"
+           style="flex:1; padding:10px 12px; font-size:14px; border:1px solid #FF6B35; 
+                  border-radius:6px; background-color:#FDF6EC; color:#333; outline:none;">
+    <button id="search-button" 
+            style="padding:10px 16px; font-size:14px; font-weight:600; color:#FF6B35;
+                   background-color:#FDF6EC; border:1px solid #FF6B35; border-radius:6px;
+                   cursor:pointer; display:flex; align-items:center; gap:6px;">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#FF6B35" 
+             stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="11" cy="11" r="8"></circle>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+        </svg>
+        {"⏹ 정지" if st.session_state.get("search_in_progress") else " 검색"}
+    </button>
+</div>
+
+<script>
+(function(){{
+    const input = document.getElementById('search-input');
+    const button = document.getElementById('search-button');
+    const isSearching = {"true" if st.session_state.get("search_in_progress") else "false"};
+
+    // 실시간 버튼 활성화/비활성화
+    function updateButton() {{
+        if (!isSearching) {{
+            button.disabled = input.value.trim().length === 0;
+            button.style.opacity = button.disabled ? '0.5' : '1';
+            button.style.cursor = button.disabled ? 'not-allowed' : 'pointer';
+        }}
+    }}
+
+    // 입력 이벤트 리스너
+    input.addEventListener('input', updateButton);
+
+    // 엔터키 처리
+    input.addEventListener('keypress', function(e) {{
+        if (e.key === 'Enter' && !button.disabled) {{
+            button.click();
+        }}
+    }});
+
+    // 버튼 클릭 처리
+    button.addEventListener('click', function() {{
+        if (!this.disabled) {{
+            const url = new URL(window.parent.location);
+            const keyword = input.value.trim();
+
+            if (isSearching) {{
+                // 정지 처리
+                url.searchParams.set('action', 'stop');
+            }} else if (keyword) {{
+                // 검색 처리
+                url.searchParams.set('kw', keyword);
+                url.searchParams.set('action', 'search');
+            }}
+
+            window.parent.history.replaceState(null, '', url);
+            window.parent.location.reload();
+        }}
+    }});
+
+    // 초기 상태 설정
+    updateButton();
+}})();
+</script>
+"""
+
+components.html(search_html, height=80)
+
+# URL 파라미터로부터 액션 처리
+action = st.query_params.get("action")
+if action == "search":
+    kw = st.query_params.get("kw", "")
+    if kw:
+        st.session_state["kw_input"] = kw
+        st.session_state["kw_input_hidden"] = kw
+        _apply_kw()
+    # 파라미터 정리
+    q = dict(st.query_params)
+    q.pop("action", None)
+    st.query_params.clear()
+    st.query_params.update(q)
+
+elif action == "stop":
+    st.session_state["do_search"] = False
+    st.session_state["search_in_progress"] = False
+    st.session_state["search_token"] = st.session_state.get("search_token", 0) + 1
+    # 파라미터 정리
+    q = dict(st.query_params)
+    q.pop("action", None)
+    st.query_params.clear()
+    st.query_params.update(q)
+    st.rerun()
 
 # 검색 버튼 CSS
 st.markdown(f"""
@@ -729,25 +761,24 @@ if st.session_state.get("search_in_progress") and st.session_state.get("search_k
 
 #태그 버튼
 st.markdown('<div class="row-title"><h3>📌 키워드 선택</h3></div>', unsafe_allow_html=True)
+#expander로 접기,펴기
 with st.expander("OPEN/CLOSE", expanded=False):
-    if st.session_state.get("is_mobile"):
-        # ✅ 모바일: 예쁜 칩 2열
-        render_mobile_tag_chips(PRIMARY, TAGS)
-    else:
-        # ✅ 데스크톱: 지금 쓰던 8개씩 가로 → 2행
-        for row in chunk(TAGS, 8):
-            cols = st.columns(8, gap="small")
-            for col, raw_kw in zip(cols, row):
-                with col:
-                    kw = raw_kw.lstrip("#")
-                    st.button(
-                        kw,
-                        key=f"pill_{kw}",
-                        type="secondary",
-                        use_container_width=True,
-                        on_click=_apply_tag,
-                        args=(f"근처 {kw}",)
-                    )
+    _per = 2 if st.session_state.get("is_mobile") else 8
+    for row in chunk(TAGS, _per):
+        st.markdown('<div class="pill-row">', unsafe_allow_html=True)
+        cols = st.columns(len(row), gap="small")
+        for col, raw_kw in zip(cols, row):
+            with col:
+                kw = raw_kw.lstrip("#")
+                st.button(
+                    kw,
+                    key=f"pill_{kw}",
+                    type="secondary",
+                    use_container_width=True,
+                    on_click=_apply_tag,
+                    args=(f"근처 {kw}",)
+                )
+        st.markdown('</div>', unsafe_allow_html=True)
 
 # 태그 버튼 CSS
 st.markdown(f"""
@@ -1185,17 +1216,17 @@ st.markdown("""
   }
 }
 
-@media (min-width: 821px){
-  /* 데스크톱에서만 Streamlit 버튼 고정폭을 쓰고 싶다면 여기에 */
-  .stButton > button[kind="secondary"]{
-    display:inline-flex !important;
-    align-items:center; justify-content:center;
-    width:104px !important; min-width:104px !important;
-    height:34px !important; line-height:34px !important;
-    padding:0 10px !important; margin:2px 6px !important;
-    white-space:nowrap !important;
-  }
-  .stButton{ display:inline-block !important; margin:0 !important; }
+/* [MOD] Keyword pills (secondary buttons): fixed size + tight spacing */
+.stButton > button[kind="secondary"]{
+  display: inline-flex !important;       /* sit next to each other */
+  align-items: center; justify-content: center;
+  width: 104px !important;               /* fixed width so it won't shrink */
+  min-width: 104px !important;
+  height: 34px !important;               /* fixed height for clean rows */
+  line-height: 34px !important;
+  padding: 0 10px !important;
+  margin: 2px 6px !important;            /* tighter spacing between pills */
+  white-space: nowrap !important;
 }
 
 /* Ensure the wrapper itself doesn't force full width */

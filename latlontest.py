@@ -1,8 +1,9 @@
 import os
 import math
 import requests
-
-KAKAO_API_KEY = '11320e3940a6d61627018f9e4e4a493b'
+import dotenv
+dotenv.load_dotenv()
+KAKAO_API_KEY = os.getenv('KAKAO_API_KEY')
 
 def haversine_m(lat1, lon1, lat2, lon2):
     R = 6371000.0
