@@ -8,6 +8,7 @@ from typing import Optional, Tuple, Dict, Any, List
 import math
 import textwrap
 import dotenv
+import streamlit as st
 dotenv.load_dotenv()
 if "OLLAMA_REMOTE_HOST" in st.secrets:
     os.environ["OLLAMA_REMOTE_HOST"] = st.secrets["OLLAMA_REMOTE_HOST"]
