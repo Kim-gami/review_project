@@ -6,4 +6,4 @@ streamlit
 folium
 python-dotenv
 pandas
-streamlit_folium
+streamlit-folium
