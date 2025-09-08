@@ -3,6 +3,8 @@ import math
 import requests
 import dotenv
 dotenv.load_dotenv()
+if "KAKAO_API_KEY" in st.secrets:
+    os.environ["KAKAO_API_KEY"] = st.secrets["KAKAO_API_KEY"]
 KAKAO_API_KEY = os.getenv('KAKAO_API_KEY')
 
 def haversine_m(lat1, lon1, lat2, lon2):

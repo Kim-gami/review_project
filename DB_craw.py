@@ -9,6 +9,8 @@ import math
 import textwrap
 import dotenv
 dotenv.load_dotenv()
+if "OLLAMA_REMOTE_HOST" in st.secrets:
+    os.environ["OLLAMA_REMOTE_HOST"] = st.secrets["OLLAMA_REMOTE_HOST"]
 # ---- 외부 모듈 ----
 import f_multi_main_tool
 import latlontest

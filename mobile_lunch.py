@@ -10,7 +10,8 @@ import DB_craw
 import latlontest
 
 dotenv.load_dotenv()
-
+if "OLLAMA_REMOTE_HOST" in st.secrets:
+    os.environ["OLLAMA_REMOTE_HOST"] = st.secrets["OLLAMA_REMOTE_HOST"]
 # =========================
 # 0) 기본 설정 / 상수
 # =========================
