@@ -10,8 +10,7 @@ import DB_craw
 import latlontest
 
 dotenv.load_dotenv()
-if "OLLAMA_REMOTE_HOST" in st.secrets:
-    os.environ["OLLAMA_REMOTE_HOST"] = st.secrets["OLLAMA_REMOTE_HOST"]
+
 # =========================
 # 0) 기본 설정 / 상수
 # =========================
@@ -392,6 +391,59 @@ def _get_row_by_name(name: str, df: pd.DataFrame):
         pass
     return None
 
+def render_mobile_tag_chips(primary_color: str, tags_src: list[str]):
+    tags = [t.lstrip("#") for t in tags_src]
+    pills = [f'<button class="pp-chip" data-kw="근처 {html.escape(kw)}">#{html.escape(kw)}</button>' for kw in tags]
+    rows = (len(tags)+1)//2
+    height_px = min(rows*46 + 14, 460)  # 적당히 늘어나는 높이
+
+    components.html(f"""
+    <style>
+      .pp-chip-grid {{
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0,1fr)); /* 모바일 2열 고정 */
+        gap: 8px;
+        width: 100%;
+      }}
+      .pp-chip {{
+        width: 100%;
+        height: 36px;                 /* 컴팩트 높이 */
+        padding: 6px 8px;             /* 좌우 패딩 슬림 */
+        border-radius: 999px;
+        border: 1px solid rgba(255,107,53,.35);
+        background: linear-gradient(180deg,#FFF8F2 0%, #FFF3EA 100%);
+        color: {primary_color};
+        font-weight: 700;
+        font-size: 13px;
+        line-height: 1;
+        box-shadow: 0 2px 8px rgba(255,107,53,.10);
+        transition: transform .08s ease, box-shadow .15s ease, filter .15s ease;
+      }}
+      .pp-chip:hover {{ filter: brightness(1.02); box-shadow: 0 4px 12px rgba(255,107,53,.12); }}
+      .pp-chip:active {{ transform: translateY(1px); }}
+    </style>
+
+    <div class="pp-chip-grid" id="pp-chip-grid">
+      {''.join(pills)}
+    </div>
+
+    <script>
+      (function(){{
+        var grid = document.getElementById('pp-chip-grid');
+        if(!grid) return;
+        grid.addEventListener('click', function(e){{
+          var btn = e.target.closest('.pp-chip');
+          if(!btn) return;
+          var kw = btn.getAttribute('data-kw');
+          const url = new URL(window.parent.location);
+          url.searchParams.set('kw', kw);
+          window.parent.history.replaceState(null,'',url);
+          window.parent.location.reload();
+        }});
+      }})();
+    </script>
+    """, height=height_px, scrolling=True)
+
 #메인
 #위치 확보
 ensure_browser_geolocation()
@@ -762,24 +814,25 @@ if st.session_state.get("search_in_progress") and st.session_state.get("search_k
 
 #태그 버튼
 st.markdown('<div class="row-title"><h3>📌 키워드 선택</h3></div>', unsafe_allow_html=True)
-#expander로 접기,펴기
 with st.expander("OPEN/CLOSE", expanded=False):
-    _per = 2 if st.session_state.get("is_mobile") else 8
-    for row in chunk(TAGS, _per):
-        st.markdown('<div class="pill-row">', unsafe_allow_html=True)
-        cols = st.columns(len(row), gap="small")
-        for col, raw_kw in zip(cols, row):
-            with col:
-                kw = raw_kw.lstrip("#")
-                st.button(
-                    kw,
-                    key=f"pill_{kw}",
-                    type="secondary",
-                    use_container_width=True,
-                    on_click=_apply_tag,
-                    args=(f"근처 {kw}",)
-                )
-        st.markdown('</div>', unsafe_allow_html=True)
+    if st.session_state.get("is_mobile"):
+        # ✅ 모바일: 예쁜 칩 2열
+        render_mobile_tag_chips(PRIMARY, TAGS)
+    else:
+        # ✅ 데스크톱: 지금 쓰던 8개씩 가로 → 2행
+        for row in chunk(TAGS, 8):
+            cols = st.columns(8, gap="small")
+            for col, raw_kw in zip(cols, row):
+                with col:
+                    kw = raw_kw.lstrip("#")
+                    st.button(
+                        kw,
+                        key=f"pill_{kw}",
+                        type="secondary",
+                        use_container_width=True,
+                        on_click=_apply_tag,
+                        args=(f"근처 {kw}",)
+                    )
 
 # 태그 버튼 CSS
 st.markdown(f"""
@@ -1217,17 +1270,17 @@ st.markdown("""
   }
 }
 
-/* [MOD] Keyword pills (secondary buttons): fixed size + tight spacing */
-.stButton > button[kind="secondary"]{
-  display: inline-flex !important;       /* sit next to each other */
-  align-items: center; justify-content: center;
-  width: 104px !important;               /* fixed width so it won't shrink */
-  min-width: 104px !important;
-  height: 34px !important;               /* fixed height for clean rows */
-  line-height: 34px !important;
-  padding: 0 10px !important;
-  margin: 2px 6px !important;            /* tighter spacing between pills */
-  white-space: nowrap !important;
+@media (min-width: 821px){
+  /* 데스크톱에서만 Streamlit 버튼 고정폭을 쓰고 싶다면 여기에 */
+  .stButton > button[kind="secondary"]{
+    display:inline-flex !important;
+    align-items:center; justify-content:center;
+    width:104px !important; min-width:104px !important;
+    height:34px !important; line-height:34px !important;
+    padding:0 10px !important; margin:2px 6px !important;
+    white-space:nowrap !important;
+  }
+  .stButton{ display:inline-block !important; margin:0 !important; }
 }
 
 /* Ensure the wrapper itself doesn't force full width */
