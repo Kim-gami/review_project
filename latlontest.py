@@ -2,10 +2,7 @@ import os
 import math
 import requests
 import dotenv
-import streamlit as st
 dotenv.load_dotenv()
-if "KAKAO_API_KEY" in st.secrets:
-    os.environ["KAKAO_API_KEY"] = st.secrets["KAKAO_API_KEY"]
 KAKAO_API_KEY = os.getenv('KAKAO_API_KEY')
 
 def haversine_m(lat1, lon1, lat2, lon2):
@@ -91,49 +88,8 @@ def kakao_keyword_nearby(lat=None, lon=None, query="", TOP_N_STORES=5, radius=10
         distance[r["name"]] = r.get("distance_m")
     return res, distance
 
-def run_multi(lat=None, lon=None, query="", TOP_N_STORES=5, radius=1000, sort="accuracy", max_pages=1):
-    url = "https://dapi.kakao.com/v2/local/search/keyword.json"
-    headers = {"Authorization": f"KakaoAK {KAKAO_API_KEY}"}
-    results = []
-
-    for page in range(1, max_pages + 1):
-        params = {
-            "query": query,
-            "page": page,
-            "size": 15,
-            "sort": sort
-        }
-        # 🔹 좌표가 있으면 근처 검색
-        if lat is not None and lon is not None:
-            params.update({"x": lon, "y": lat, "radius": radius})
-
-        r = requests.get(url, headers=headers, params=params, timeout=10)
-        r.raise_for_status()
-        data = r.json()
-
-        for doc in data.get("documents", []):
-            place_lat = float(doc["y"])
-            place_lon = float(doc["x"])
-            dist_m = None
-            if lat and lon:
-                dist_m = int(haversine_m(lat, lon, place_lat, place_lon))
-            results.append({
-                "name": doc["place_name"],
-                "address": doc.get("address_name"),
-                "lat": place_lat,
-                "lon": place_lon
-            })
-
-        if data.get("meta", {}).get("is_end", True):
-            break
-
-    res = {}
-    for r in results[:TOP_N_STORES]:
-        res[r["name"]] = (r["address"], (r["lat"], r['lon']))
-    return res
-
 if __name__ == "__main__":
     # 사용 예시: 정자동 좌표 근처 "삼겹살"
     JEONGJA_LAT, JEONGJA_LON = 37.3670, 127.1080
-    rows = kakao_keyword_nearby(JEONGJA_LAT, JEONGJA_LON,TOP_N_STORES=5, query="치킨", radius=1200)
+    rows = kakao_keyword_nearby(None, None,TOP_N_STORES=5, query="정자동 삼겹살", radius=1200)
     print(rows)

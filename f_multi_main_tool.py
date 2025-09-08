@@ -71,7 +71,7 @@ def get_store_list_from_search_store(keyword: str, top_n: int = 5, headless: boo
     반환: [(매장명, 주소), ...]
     """
     try:
-        out = latlontest.run_multi(keyword, top_n=top_n, headless=headless)
+        out,_ = latlontest.kakao_keyword_nearby(None, None,query=keyword,radius=1200,TOP_N_STORES=5,)
         if isinstance(out, dict):
             return list(out.items())[:top_n]
     except Exception as e:
@@ -179,7 +179,7 @@ def pretty_print(results: dict):
                 print(f" - {preview}{ellipsis}")
 
 if __name__ == "__main__":
-    kw = "미담 정자"
+    kw = "정자동 삼겹살"
     out = collect_all_reviews_parallel(kw, top_n=1, max_reviews=10, headless=True)
     print(out)
     # save_results_to_csv_unique(all_res, "reviews.csv")
