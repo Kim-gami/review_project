@@ -1,5 +1,6 @@
 # naver_tool.py
 import re
+from selenium_bootstrap import make_chrome
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -164,7 +165,7 @@ def parse_reviews(driver, timeout=5, max_reviews=None):
 
 def run(keyword: str, max_reviews=None):
     url = NAVER_URL_TEMPLATE.format(keyword)
-    driver = make_driver(headless=True)
+    driver = make_chrome(headless=True)
     driver.get(url)
     try:
         get_first_place(driver, timeout=7)

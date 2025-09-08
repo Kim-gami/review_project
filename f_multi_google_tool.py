@@ -1,3 +1,4 @@
+from selenium_bootstrap import make_chrome
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.action_chains import ActionChains
@@ -147,7 +148,7 @@ def parse_reviews(driver, timeout=20, max_reviews=None):
 
 def run(keyword: str, max_reviews=None):
     url = f"https://www.google.co.kr/maps/search/{keyword}"
-    driver = make_driver(headless=True)
+    driver = make_chrome(headless=True)
     driver.get(url)
 
     try:

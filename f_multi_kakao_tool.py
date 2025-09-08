@@ -1,5 +1,6 @@
 # f_multi_kakao_tool.py
 import re, time
+from selenium_bootstrap import make_chrome
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -193,7 +194,7 @@ def parse_reviews(driver, timeout=6, max_reviews=None):
 
 def run_multi(keyword: str, max_reviews=None, headless=True):
     url = KAKAO_URL_TEMPLATE.format(keyword)
-    driver = make_driver(headless=headless)
+    driver = make_chrome(headless=headless)
     driver.get(url)
 
     try:
