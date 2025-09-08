@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import f_multi_kakao_tool
 import f_multi_google_tool
 import f_multi_naver_tool
-import search_store  # ✅ 추가: 매장 이름/주소 뽑는 용도
+import latlontest  # ✅ 추가: 매장 이름/주소 뽑는 용도
 import os
 import csv
 # -------------------------
@@ -71,7 +71,7 @@ def get_store_list_from_search_store(keyword: str, top_n: int = 5, headless: boo
     반환: [(매장명, 주소), ...]
     """
     try:
-        out = search_store.run_multi(keyword, top_n=top_n, headless=headless)
+        out = latlontest.run_multi(keyword, top_n=top_n, headless=headless)
         if isinstance(out, dict):
             return list(out.items())[:top_n]
     except Exception as e:
