@@ -1,2 +1,9 @@
 pip install selenium
 pip install bs4
+pip install langchain_ollama
+pip install langchain_core
+pip install streamlit
+pip install folium
+pip install dotenv
+pip install sqlite3
+pip install pandas
