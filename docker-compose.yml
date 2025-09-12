@@ -1,0 +1,15 @@
+services:
+  pickplace:
+    build: .
+    container_name: pickplace
+    user: "0:0"
+    ports:
+      - "8501:8501"
+    env_file:
+      - .env
+    volumes:
+      - ./reviews.db:/app/reviews.db         # SQLite 영속화
+      - ./logs:/app/logs                     # 선택(로그 저장 폴더)
+    # 셀레니움 안정화를 위해 /dev/shm 크기를 넉넉히
+    shm_size: "1gb"
+    restart: unless-stopped

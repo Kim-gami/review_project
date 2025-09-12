@@ -1,9 +1,9 @@
-selenium==4.24.0
-bs4
-langchain_ollama
-langchain_core
-streamlit
-folium
-python-dotenv
+streamlit>=1.37
 pandas
+folium
 streamlit-folium
+python-dotenv
+requests
+selenium
+langchain-core
+langchain-ollama

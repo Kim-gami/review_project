@@ -1,19 +1,13 @@
-# DB_craw.py
-
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from langchain_ollama.llms import OllamaLLM
-import os, re, hashlib, json
+import re, hashlib, json, textwrap, dotenv
 from typing import Optional, Tuple, Dict, Any, List
-import math
-import textwrap
-import dotenv
-dotenv.load_dotenv()
-# ---- 외부 모듈 ----
-import f_multi_main_tool
-import latlontest
 from concurrent.futures import ThreadPoolExecutor, as_completed
-# ---- sqlite3 폴백(일부 윈도우 환경용) ----
+
+import f_multi_main_tool
+import kakaoapi
+
 try:
     import sqlite3  # 표준
 except Exception:
@@ -22,13 +16,13 @@ except Exception:
     sys.modules['_sqlite3'] = pysqlite3
     import sqlite3
 
-# =========================
-# 설정
-# =========================
+dotenv.load_dotenv()
+
+#전역 변수
 DB_PATH = "reviews.db"
 TOP_N_STORES = 5
 STALE_DAYS = 30
-PER_SOURCE_LIMIT = None   # 출처별 최신 N개 제한(없으면 전체)
+PER_SOURCE_LIMIT = None
 CRAWL_MAX_REVIEWS = 10
 CRAWL_HEADLESS = True
 CRAWL_MAX_WORKERS = 5
@@ -58,9 +52,9 @@ PROMPT = """너는 리뷰 요약 및 평가 전문가야.
 [리뷰들]
 {reviews}
 """
-# =========================
+
 # DB & 스키마 (+마이그레이션)
-# =========================
+
 DDL = """
 PRAGMA foreign_keys = ON;
 CREATE TABLE IF NOT EXISTS stores (
@@ -91,6 +85,7 @@ CREATE INDEX IF NOT EXISTS idx_reviews_store ON reviews(store_id);
 CREATE INDEX IF NOT EXISTS idx_reviews_source ON reviews(source);
 CREATE INDEX IF NOT EXISTS idx_reviews_lastseen ON reviews(last_seen);
 """
+
 def checkpoint(db_path=DB_PATH, mode="TRUNCATE"):
     with sqlite3.connect(db_path) as con:
         con.execute(f"PRAGMA wal_checkpoint({mode});")
@@ -112,9 +107,6 @@ def _init_db():
     with _connect() as con:
         con.executescript(DDL)
 
-# =========================
-# 유틸: 정규화/파싱/해시
-# =========================
 def _as_float_or_none(x):
     try:
         return float(x)
@@ -167,9 +159,6 @@ def _make_review_hash(store_id: int, source: Optional[str], review: Optional[str
     base = f"{store_id}|{_norm_text(source)}|{_norm_text(review)}"
     return hashlib.sha256(base.encode("utf-8")).hexdigest()
 
-# =========================
-# Top5 후보 (카카오 리스트)
-# =========================
 def get_top5_store_pairs(keyword: str, lat: float, lon: float, query: str) -> List[Tuple[str, Optional[str], Optional[Tuple[Optional[float], Optional[float]]]]]:
     """
     반환: [(store_name, address, (lat,lng)), ...] 최대 5개
@@ -179,15 +168,19 @@ def get_top5_store_pairs(keyword: str, lat: float, lon: float, query: str) -> Li
     kw = (keyword or "").strip()
     if kw.startswith("근처 "):
         q = kw.replace("근처", "", 1).strip()  # '근처 ' 제거 → 실제 카테고리/태그
-        ret, distance = latlontest.kakao_keyword_nearby(
+        ret, distance = kakaoapi.kakao_keyword_nearby(
+            lat=lat, lon=lon, query=q, TOP_N_STORES=TOP_N_STORES
+        )
+    elif kw.startswith("주변 "):
+        q = kw.replace("주변", "", 1).strip()  # '근처 ' 제거 → 실제 카테고리/태그
+        ret, distance = kakaoapi.kakao_keyword_nearby(
             lat=lat, lon=lon, query=q, TOP_N_STORES=TOP_N_STORES
         )
     else:
         # 예: "정자동 삼겹살" → 좌표 없이 전국 검색(정확도 우선, 카카오가 지역어를 해석)
-        ret, distance = latlontest.kakao_keyword_nearby(
+        ret, distance = kakaoapi.kakao_keyword_nearby(lat=lat, lon=lon,
             query=kw, TOP_N_STORES=TOP_N_STORES
         )
-
     pairs: List[Tuple[str, Optional[str], Optional[Tuple[Optional[float], Optional[float]]]]] = []
     if isinstance(ret, dict):
         for name, val in list(ret.items())[:TOP_N_STORES]:
@@ -200,9 +193,7 @@ def get_top5_store_pairs(keyword: str, lat: float, lon: float, query: str) -> Li
             pairs.append((str(name).strip(), addr, latlng))
     return pairs[:TOP_N_STORES], distance
 
-# =========================
-# 신선도/조회
-# =========================
+
 def latest_age_days(store_name: str) -> Optional[float]:
     q = """
     SELECT julianday('now') - julianday(MAX(r.last_seen)) AS age_days
@@ -216,9 +207,7 @@ def latest_age_days(store_name: str) -> Optional[float]:
     try: return float(row["age_days"])
     except Exception: return None
 
-# =========================
-# 업서트(메모리 → DB)  ★ store_image도 반영
-# =========================
+# 업서트(메모리 → DB)
 UPSERT_STORE_SQL = """
 INSERT INTO stores (store_name, address, lat, lng, img1, img2, img3, store_key)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -242,7 +231,6 @@ ON CONFLICT(review_hash) DO UPDATE SET
 """
 
 def _upsert_one_store(con, name, address, lat, lng, store_images):
-    # store_images 는 list 또는 None
     img1 = img2 = img3 = None
     if isinstance(store_images, list):
         if len(store_images) > 0: img1 = store_images[0]
@@ -257,7 +245,7 @@ def _upsert_one_store(con, name, address, lat, lng, store_images):
 def upsert_from_results(results: dict) -> dict:
     store_ids = {}
     with _connect() as con:
-        with con:  # 트랜잭션
+        with con:
             for name, obj in results.items():
                 address_raw = (obj or {}).get("address")      # <-- 지금은 튜플일 수 있음
                 store_image = (obj or {}).get("store_image")
@@ -282,17 +270,11 @@ def upsert_from_results(results: dict) -> dict:
                         con.execute(UPSERT_REVIEW_SQL, (sid, source, rv_text, rh))
     return store_ids
 
-# =========================
-# 크롤 호출(매장 단일)
-# =========================
 def crawl_one_store(store_name: str) -> Dict[str, Any]:
     return f_multi_main_tool.collect_all_reviews_parallel(
         keyword=store_name, top_n=1, max_reviews=CRAWL_MAX_REVIEWS, headless=CRAWL_HEADLESS
     )
 
-# =========================
-# 조회: 상위 5개만 DB→리스트 (store_image 포함)
-# =========================
 def fetch_reviews_for_store_list(store_names: List[str],
                                  per_source_limit: Optional[int] = PER_SOURCE_LIMIT) -> List[Dict[str, Any]]:
     if not store_names: return []
@@ -338,26 +320,21 @@ def _second_token_or_first(q: str) -> Optional[str]:
         return None
     return toks[1] if len(toks) >= 2 else toks[0]
 
-# =========================
-# 메인 오케스트레이션(키워드 전용, LLM 없음)
-# =========================
+# 메인
 def run_keyword_flow(keyword: str, lat: float, lon:float, query:str,
                      stale_days: int = STALE_DAYS,
                      per_source_limit: Optional[int] = PER_SOURCE_LIMIT) -> Dict[str, Any]:
     def _extract_dong(text: str) -> Optional[str]:
-        """문자열에서 '정자동', '야탑동' 같은 동 토큰을 추출"""
         if not text:
             return None
         m = re.search(r'([가-힣0-9]+동)\b', text)
         return m.group(1) if m else None
     _init_db()
 
-    # 1) Top-N 후보
     top5_pairs, distance = get_top5_store_pairs(keyword, lat, lon, query)
     top5_names = [n for (n, _a, _ll) in top5_pairs]
     print(f"[INFO] Top-{len(top5_names)} stores:", ", ".join(top5_names))
 
-    # 2) Freshness 체크 → 필요시 크롤링 & 업서트
     need_crawl: List[str] = []
     for name, addr, latlng in top5_pairs:
         age = latest_age_days(name)
@@ -367,7 +344,6 @@ def run_keyword_flow(keyword: str, lat: float, lon:float, query:str,
     if need_crawl:
         all_results: Dict[str, Any] = {}
 
-        # ✅ 페어 맵(주소/좌표를 나중에 upsert 직전에도 쓸 거라 루프 밖에서 만들어둠)
         pair_map = {n: (a, ll) for (n, a, ll) in top5_pairs}
 
         to_crawl: List[Tuple[str, str]] = []
@@ -375,10 +351,8 @@ def run_keyword_flow(keyword: str, lat: float, lon:float, query:str,
             try:
                 addr, _latlng = pair_map.get(name, (None, None))
 
-                # 1) 주소에서 동 추출 → 없으면 keyword에서 추출
                 dong = _extract_dong(addr) or _extract_dong(keyword)
 
-                # 2) 매장명의 첫 토큰 + 동을 조합 (동이 있으면 앞에 붙임)
                 base_token = (name.split()[0] if name else "").strip()
                 if dong:
                     n_keyword = f"{dong} {base_token}".strip()
@@ -389,21 +363,19 @@ def run_keyword_flow(keyword: str, lat: float, lon:float, query:str,
             except Exception as e:
                 print(f"[PREP_ERROR] {name}: {e}")
 
-        # 2) 병렬 크롤 (I/O 바운드)
         with ThreadPoolExecutor(max_workers=CRAWL_MAX_WORKERS, thread_name_prefix="crawl") as ex:
             future_map = {ex.submit(crawl_one_store, nkw): name for (name, nkw) in to_crawl}
 
             for fut in as_completed(future_map):
                 name = future_map[fut]
                 try:
-                    res = fut.result()  # 기대형태: { "매장명": {...} }
+                    res = fut.result()
                     if isinstance(res, dict) and res:
                         all_results.update(res)
                 except Exception as e:
                     print(f"[CRAWL_ERROR] {name}: {e}")
 
         if all_results:
-            # ✅ 업서트 직전 좌표 주입 (기존 로직 유지)
             for n, obj in all_results.items():
                 if n in pair_map:
                     a, ll = pair_map[n]
@@ -412,10 +384,8 @@ def run_keyword_flow(keyword: str, lat: float, lon:float, query:str,
             upsert_from_results(all_results)
             checkpoint(db_path=DB_PATH)
 
-    # 3) DB에서 최종 리뷰 불러오기
     rows = fetch_reviews_for_store_list(top5_names, per_source_limit=per_source_limit)
 
-    # 4) 반환 딕셔너리 구성
     results: Dict[str, Any] = {}
     for r in rows:
         store = r["store_name"]
@@ -469,7 +439,6 @@ def _sanitize_payload(parsed: Dict[str, Any], raw_text: str) -> Dict[str, Any]:
     }
 
 def _interleave_and_dedupe(buckets: List[List[str]], limit: int) -> List[str]:
-    """여러 소스 리뷰를 번갈아 섞어 limit까지 수집, 공백/중복 제거."""
     idx = [0] * len(buckets)
     out, seen = [], set()
     while len(out) < limit and any(i < len(b) for i, b in zip(idx, buckets)):
@@ -487,12 +456,9 @@ def _interleave_and_dedupe(buckets: List[List[str]], limit: int) -> List[str]:
     return out
 
 def _gather_reviews_per_store(data: Dict[str, Any], limit: int) -> List[str]:
-    """results[store]에서 리뷰만 추출. kakao/google/naver + 최상단 reviews 모두 지원."""
-    # 표준 구조
     kakao  = list((((data.get("kakao")  or {}).get("reviews")) or []))
     google = list((((data.get("google") or {}).get("reviews")) or []))
     naver  = list((((data.get("naver")  or {}).get("reviews")) or []))
-    # fallback: 최상단 reviews
     top    = list(((data.get("reviews")) or []))
     buckets = [kakao, google, naver, top] if top else [kakao, google, naver]
     return _interleave_and_dedupe(buckets, limit)
@@ -504,17 +470,12 @@ def summarize_store_with_rating(
     max_reviews_per_store: int = 60,
     max_workers: int = 6,
     temperature: float = 0.0,
-    api_key: Optional[str] = None,
     base_url: Optional[str] = None
 ) -> Dict[str, Any]:
-    """
-    dict(results)를 받아 LLM에 병렬 추론을 수행해 매장별 한 줄 평/장단점/별점을 생성.
-    return: {store: {"one_liner": str, "pros":[...], "cons":[...], "rating":4.2, "raw_text_len":N}}
-    """
+
     llm = OllamaLLM(
         model=model_name,
         temperature=temperature,
-        # api_key=api_key or os.getenv('OLLAMA_LOCAL_HOST'),
         base_url=base_url
     )
     prompt = PromptTemplate.from_template(PROMPT)
@@ -531,16 +492,10 @@ def summarize_store_with_rating(
     if not inputs:
         return {}
 
-    # 병렬 추론 (LCEL .batch)
     raw_outputs = chain.batch(inputs, config={"max_concurrency": max_workers})
-    # 임시
-    with open("result.txt", 'w', encoding='utf-8') as f:
-        f.write(str(raw_outputs))
-    # 후처리
     out: Dict[str, Any] = {}
     for (store, text), raw in zip(order, raw_outputs):
         parsed = _safe_parse_json(raw)
-        # 리뷰가 비어있거나 JSON 파싱 실패 시 기본값
         if not text.strip():
             out[store] = {"one_liner": "", "rating": 3.0, "complain": [], "raw_text_len": 0}
             continue
@@ -549,61 +504,19 @@ def summarize_store_with_rating(
         out[store] = _sanitize_payload(parsed, text)
 
     return out
-def pretty_print_summaries(summary: dict, width: int = 80):
-    """
-    summary: { "가게명": {"one_liner": str, "rating": float, "complain": [str], "raw_text_len": int}, ... }
-    width  : 한 줄 래핑 폭
-    """
-    if not summary:
-        print("출력할 요약이 없습니다.")
-        return
 
-    name_w = max(len(str(name)) for name in summary.keys())
 
-    for store, s in summary.items():
-        one = (s.get("one_liner") or "").strip()
-        rating = float(s.get("rating", 3.0))
-        complains = [c for c in (s.get("complain") or []) if isinstance(c, str) and c.strip()]
-        raw_len = int(s.get("raw_text_len", 0))
-
-        # 별점 막대
-        filled = int(round(rating))  # 정수 개수의 별
-        stars = "★" * filled + "☆" * (5 - filled)
-        stars += f"  ({rating:.1f})"
-
-        # 헤더
-        print("─" * width)
-        print(f"🏪 {store}")
-        print(f"   별점: {stars}   |   원문 길이: {raw_len}")
-
-        # 한 줄 평
-        if one:
-            wrapped = textwrap.fill(one, width=width, subsequent_indent=" " * 6)
-            print(f"   한줄평: {wrapped}")
-        else:
-            print(f"   한줄평: (없음)")
-
-        # 불만사항
-        if complains:
-            print("   불만사항:")
-            for i, c in enumerate(complains, 1):
-                wrapped = textwrap.fill(c, width=width, subsequent_indent=" " * 8)
-                print(f"      {i}. {wrapped}")
-        else:
-            print("   불만사항: (없음)")
-
-    print("─" * width)
 if __name__ == "__main__":
-    out = run_keyword_flow("정자 두향", stale_days=7, per_source_limit=None)
+    out = run_keyword_flow("팔분김치찜김치찌개 분당점", stale_days=30, per_source_limit=None, lat=37.3670, lon=127.1080, query="정자동 고기")
     # print(out)
     # summary = summarize_store_with_rating(
-    #     results=out,  # 앞 단계 산출물
+    #     results=out,
     #     model_name="llama3.1",
     #     max_reviews_per_store=60,
     #     max_workers=6,
-    #     temperature=0.2,  # 일관된 출력
+    #     temperature=0.2,
     #     base_url= os.getenv("OLLAMA_REMOTE_HOST")
     # )
-    # pretty_print_summaries(summary, width=90)
-    from pprint import pprint
-    pprint(out)
+
+    # from pprint import pprint
+    # pprint(out)
