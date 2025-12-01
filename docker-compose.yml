@@ -8,8 +8,7 @@ services:
     env_file:
       - .env
     volumes:
-      - ./reviews.db:/app/reviews.db         # SQLite 영속화
-      - ./logs:/app/logs                     # 선택(로그 저장 폴더)
-    # 셀레니움 안정화를 위해 /dev/shm 크기를 넉넉히
+      - ./reviews.db:/app/reviews.db 
+      - ./logs:/app/logs
     shm_size: "1gb"
     restart: unless-stopped
